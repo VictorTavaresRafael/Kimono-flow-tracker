@@ -1,20 +1,24 @@
-
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Check, QrCode, UserCheck } from "lucide-react";
+import { ArrowLeft, Check, QrCode, UserCheck, LogOut, User } from "lucide-react";
 import { Link } from "react-router-dom";
 import { recordAttendance, getStudentByRA } from "@/utils/helpers";
 import { toast } from "@/components/ui/use-toast";
 import { Card } from "@/components/ui/card";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Attendance = () => {
   const [ra, setRa] = useState("");
-  const [success, setSuccess] = useState(false);
-  const [studentName, setStudentName] = useState("");
+  const [success, setSuccess] = useState(false);  const [studentName, setStudentName] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const { currentUser, signOut } = useAuth();
+
+  const handleLogout = async () => {
+    await signOut();
+  };
   
   // Focar no input quando a página carrega
   useEffect(() => {
@@ -23,8 +27,7 @@ const Attendance = () => {
       inputElement.focus();
     }
   }, [success]);
-  
-  const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!ra.trim()) {
@@ -38,10 +41,9 @@ const Attendance = () => {
     
     setIsProcessing(true);
     
-    // Simular um pequeno delay para feedback visual
-    setTimeout(() => {
+    try {
       // Verificar se o aluno existe e registrar presença
-      const student = getStudentByRA(ra.trim());
+      const student = await getStudentByRA(ra.trim());
       
       if (!student) {
         toast({
@@ -54,7 +56,7 @@ const Attendance = () => {
       }
       
       // Registrar presença
-      const result = recordAttendance(student.ra);
+      const result = await recordAttendance(student.ra);
       
       if (result) {
         setSuccess(true);
@@ -80,17 +82,43 @@ const Attendance = () => {
           variant: "destructive"
         });
         setIsProcessing(false);
-      }
-    }, 500);
+      }    } catch (error) {
+      console.error('Erro ao registrar presença:', error);
+      toast({
+        title: "Erro",
+        description: "Ocorreu um erro ao registrar a presença",
+        variant: "destructive"
+      });
+      setIsProcessing(false);
+    }
   };
-  
-  return (
+    return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white flex flex-col">
       <div className="p-4 bg-white shadow-sm">
-        <Link to="/" className="flex items-center text-gray-600 hover:text-gray-900 transition-colors">
-          <ArrowLeft className="mr-2 h-5 w-5" />
-          <span>Voltar para o dashboard</span>
-        </Link>
+        <div className="flex items-center justify-between">
+          <Link to="/" className="flex items-center text-gray-600 hover:text-gray-900 transition-colors">
+            <ArrowLeft className="mr-2 h-5 w-5" />
+            <span>Voltar para o dashboard</span>
+          </Link>
+          
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <User className="h-4 w-4" />
+              <span>{currentUser?.user_metadata?.name}</span>
+              <span className="text-gray-400">•</span>
+              <span>{currentUser?.user_metadata?.role === 'professor' ? 'Professor' : 'Monitor'}</span>
+            </div>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleLogout}
+              className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+            >
+              <LogOut className="h-4 w-4" />
+              Sair
+            </Button>
+          </div>
+        </div>
       </div>
       
       <div className="flex-1 flex flex-col items-center justify-center p-4">

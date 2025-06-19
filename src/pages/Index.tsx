@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,8 +7,10 @@ import StudentCard from "@/components/StudentCard";
 import StudentProfile from "@/components/StudentProfile";
 import StudentForm from "@/components/StudentForm";
 import QRCodeGenerator from "@/components/QRCodeGenerator";
-import { PlusCircle, QrCode, Search } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { PlusCircle, QrCode, Search, LogOut, User, Calendar } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
+import { Link } from "react-router-dom";
 
 const Index = () => {
   const [students, setStudents] = useState<Student[]>([]);
@@ -17,14 +18,30 @@ const Index = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [isQRDialogOpen, setIsQRDialogOpen] = useState(false);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [studentToEdit, setStudentToEdit] = useState<Student | undefined>(undefined);
+  const [isFormOpen, setIsFormOpen] = useState(false);  const [studentToEdit, setStudentToEdit] = useState<Student | undefined>(undefined);
+  const [isLoading, setIsLoading] = useState(true);
   
   // Carregar alunos
   useEffect(() => {
-    const loadedStudents = getStudents();
-    setStudents(loadedStudents);
-    setFilteredStudents(loadedStudents);
+    const loadStudents = async () => {
+      try {
+        setIsLoading(true);
+        const loadedStudents = await getStudents();
+        setStudents(loadedStudents);
+        setFilteredStudents(loadedStudents);
+      } catch (error) {
+        console.error('Erro ao carregar alunos:', error);
+        toast({
+          title: "Erro",
+          description: "Não foi possível carregar os alunos",
+          variant: "destructive"
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadStudents();
   }, []);
   
   // Filtrar alunos quando a busca mudar
@@ -55,25 +72,40 @@ const Index = () => {
   const handleCloseStudentProfile = () => {
     setSelectedStudent(null);
   };
-  
-  const handleSaveStudent = (student: Student) => {
-    const savedStudent = saveStudent(student);
-    
-    // Atualizar a lista de estudantes
-    setStudents(getStudents());
-    
-    setIsFormOpen(false);
-    setStudentToEdit(undefined);
-    
-    toast({
-      title: "Aluno salvo com sucesso",
-      description: student.id ? "Dados atualizados com sucesso." : "Novo aluno cadastrado com sucesso.",
-    });
+    const handleSaveStudent = async (student: Student) => {
+    try {
+      const savedStudent = await saveStudent(student);
+      
+      // Recarregar a lista de estudantes
+      const updatedStudents = await getStudents();
+      setStudents(updatedStudents);
+      setFilteredStudents(updatedStudents);
+      
+      setIsFormOpen(false);
+      setStudentToEdit(undefined);
+      
+      toast({
+        title: "Aluno salvo com sucesso",
+        description: student.id ? "Dados atualizados com sucesso." : "Novo aluno cadastrado com sucesso.",
+      });
+    } catch (error) {
+      console.error('Erro ao salvar aluno:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível salvar o aluno",
+        variant: "destructive"
+      });
+    }
   };
-  
-  const handleOpenForm = (student?: Student) => {
+    const handleOpenForm = (student?: Student) => {
     setStudentToEdit(student);
     setIsFormOpen(true);
+  };
+
+  const { currentUser, signOut } = useAuth();
+
+  const handleLogout = async () => {
+    await signOut();
   };
   
   return (
@@ -85,6 +117,41 @@ const Index = () => {
         />
       ) : (
         <div className="w-full max-w-3xl mx-auto px-4 py-6">
+          {/* Header com informações do usuário */}
+          <div className="bg-white rounded-lg shadow-sm p-4 mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                <User className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-gray-900">
+                  Bem-vindo, {currentUser?.user_metadata?.name || 'Usuário'}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {currentUser?.user_metadata?.role === 'professor' ? 'Professor' : 'Monitor'} • 
+                  RA: {currentUser?.user_metadata?.ra}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link to="/attendance">
+                <Button variant="outline" size="sm" className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4" />
+                  Registrar Presença
+                </Button>
+              </Link>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleLogout}
+                className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+              >
+                <LogOut className="h-4 w-4" />
+                Sair
+              </Button>
+            </div>
+          </div>
+
           <header className="mb-6">
             <h1 className="text-2xl font-bold text-jj-navy mb-2">Sistema de Controle de Alunos</h1>
             <p className="text-gray-600">
@@ -110,9 +177,12 @@ const Index = () => {
               {filteredStudents.length} {filteredStudents.length === 1 ? "Aluno" : "Alunos"}
             </h2>
           </div>
-          
-          <div className="space-y-3">
-            {filteredStudents.length > 0 ? (
+            <div className="space-y-3">
+            {isLoading ? (
+              <div className="text-center py-8">
+                <p className="text-gray-500">Carregando alunos...</p>
+              </div>
+            ) : filteredStudents.length > 0 ? (
               filteredStudents.map((student) => (
                 <StudentCard
                   key={student.id}
