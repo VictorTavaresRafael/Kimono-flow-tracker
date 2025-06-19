@@ -1,4 +1,3 @@
-
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +19,7 @@ const QRCodeGenerator = ({ isOpen, onClose }: QRCodeGeneratorProps) => {
   const [isDownloaded, setIsDownloaded] = useState(false);
   
   // URL para a página de presença
-  const presencePageUrl = `${window.location.origin}/attendance`;
+  const presencePageUrl = `${window.location.origin}/auth?aluno=1`;
   
   const handleDownload = () => {
     // Cria um elemento canvas para o QR Code
@@ -42,7 +41,7 @@ const QRCodeGenerator = ({ isOpen, onClose }: QRCodeGeneratorProps) => {
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>QR Code para Registro de Presença</DialogTitle>
+          <DialogTitle>FUNCIONALIDADE PARA BUILD</DialogTitle>
           <DialogDescription>
             Escaneie este QR Code para registrar sua presença na aula.
           </DialogDescription>

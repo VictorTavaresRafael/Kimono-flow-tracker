@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Student } from "@/types/student";
 import { getStudents, saveStudent } from "@/utils/helpers";
+import { getUsuarioByRA } from "@/lib/supabase-service";
 import StudentCard from "@/components/StudentCard";
 import StudentProfile from "@/components/StudentProfile";
 import StudentForm from "@/components/StudentForm";
@@ -11,6 +12,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PlusCircle, QrCode, Search, LogOut, User, Calendar } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
+import TurmaForm from "@/components/TurmaForm";
+import { createTurma, getTurmas, createAula } from "@/lib/supabase-service";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { Turma, Aula } from "@/types/student";
+import { supabase } from "@/lib/supabase";
 
 const Index = () => {
   const [students, setStudents] = useState<Student[]>([]);
@@ -18,8 +24,15 @@ const Index = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [isQRDialogOpen, setIsQRDialogOpen] = useState(false);
-  const [isFormOpen, setIsFormOpen] = useState(false);  const [studentToEdit, setStudentToEdit] = useState<Student | undefined>(undefined);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [studentToEdit, setStudentToEdit] = useState<Student | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
+  const [isTurmaFormOpen, setIsTurmaFormOpen] = useState(false);
+  const [professorId, setProfessorId] = useState<number | null>(null);
+  const [turmas, setTurmas] = useState<Turma[]>([]);
+  const [isLoadingTurmas, setIsLoadingTurmas] = useState(true);
+  const [aulasPorTurma, setAulasPorTurma] = useState<Record<number, Aula[]>>({});
+  const [loadingAulas, setLoadingAulas] = useState<Record<number, boolean>>({});
   
   // Carregar alunos
   useEffect(() => {
@@ -106,6 +119,77 @@ const Index = () => {
 
   const handleLogout = async () => {
     await signOut();
+  };
+  
+  const handleSaveTurma = async (turmaData) => {
+    try {
+      const turma = await createTurma(turmaData);
+      if (turma) {
+        toast({ title: "Turma criada com sucesso!" });
+        setIsTurmaFormOpen(false);
+      } else {
+        toast({ title: "Erro ao criar turma", variant: "destructive" });
+      }
+    } catch (error) {
+      toast({ title: "Erro ao criar turma", description: String(error), variant: "destructive" });
+    }
+  };
+  
+  useEffect(() => {
+    const fetchProfessorId = async () => {
+      if (currentUser?.user_metadata?.ra) {
+        const usuario = await getUsuarioByRA(currentUser.user_metadata.ra);
+        setProfessorId(usuario?.id || null);
+      }
+    };
+    fetchProfessorId();
+  }, [currentUser]);
+  
+  // Buscar turmas do professor
+  useEffect(() => {
+    if (professorId) {
+      setIsLoadingTurmas(true);
+      getTurmas().then(allTurmas => {
+        setTurmas(allTurmas.filter(t => t.professor_id === professorId));
+        setIsLoadingTurmas(false);
+      });
+    }
+  }, [professorId, isTurmaFormOpen]);
+
+  // Buscar aulas de uma turma
+  const fetchAulas = async (turmaId: number) => {
+    setLoadingAulas(prev => ({ ...prev, [turmaId]: true }));
+    try {
+      const { data, error } = await supabase
+        .from('aulas')
+        .select('*')
+        .eq('turma_id', turmaId)
+        .order('data_hora', { ascending: false });
+      if (!error) {
+        setAulasPorTurma(prev => ({ ...prev, [turmaId]: data || [] }));
+      }
+    } finally {
+      setLoadingAulas(prev => ({ ...prev, [turmaId]: false }));
+    }
+  };
+
+  // Buscar aulas ao carregar turmas
+  useEffect(() => {
+    if (turmas.length > 0) {
+      turmas.forEach(turma => {
+        fetchAulas(turma.id);
+      });
+    }
+  }, [turmas]);
+
+  const handleCreateAula = async (turmaId: number) => {
+    try {
+      await createAula(turmaId);
+      toast({ title: "Aula criada com sucesso!" });
+      fetchAulas(turmaId); // Atualiza a lista de aulas
+    } catch (error) {
+      toast({ title: "Erro ao criar aula", description: String(error), variant: "destructive" });
+    }
   };
   
   return (
@@ -218,15 +302,36 @@ const Index = () => {
               <span className="sr-only">Gerar QR Code</span>
             </Button>
           </div>
-          <div className="fixed bottom-6 right-6">
-            <Button 
-              className="h-14 w-14 rounded-full shadow-lg"
-              onClick={() => handleOpenForm()}
-            >
-              <PlusCircle />
-              <span className="sr-only">Adicionar Aluno</span>
-            </Button>
-          </div>
+          <TooltipProvider>
+            <div className="fixed bottom-6 right-6">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    className="h-14 w-14 rounded-full shadow-lg"
+                    onClick={() => handleOpenForm()}
+                  >
+                    <PlusCircle />
+                    <span className="sr-only">Adicionar Aluno</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Adicionar novo aluno</TooltipContent>
+              </Tooltip>
+            </div>
+            <div className="fixed bottom-24 right-6">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    className="h-14 w-14 rounded-full shadow-lg bg-green-600 hover:bg-green-700 transition-colors"
+                    onClick={() => setIsTurmaFormOpen(true)}
+                  >
+                    <PlusCircle />
+                    <span className="sr-only">Criar Turma</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Criar nova turma</TooltipContent>
+              </Tooltip>
+            </div>
+          </TooltipProvider>
           
           {/* Modal de QR Code */}
           <QRCodeGenerator 
@@ -244,6 +349,54 @@ const Index = () => {
             onSave={handleSaveStudent}
             studentToEdit={studentToEdit}
           />
+          <TurmaForm
+            isOpen={isTurmaFormOpen}
+            onClose={() => setIsTurmaFormOpen(false)}
+            onSave={handleSaveTurma}
+            professorId={professorId}
+          />
+          
+          {/* GERENCIAMENTO DE TURMAS */}
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold mb-2">Minhas Turmas</h2>
+            {isLoadingTurmas ? (
+              <p>Carregando turmas...</p>
+            ) : turmas.length === 0 ? (
+              <p>Nenhuma turma cadastrada.</p>
+            ) : (
+              turmas.map(turma => (
+                <div key={turma.id} className="bg-white rounded-lg shadow p-4 mb-3">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <div className="font-bold">{turma.nome}</div>
+                      <div className="text-sm text-gray-500">{turma.descricao}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button onClick={() => handleCreateAula(turma.id)}>Criar Aula</Button>
+                    </div>
+                  </div>
+                  {/* Listagem de aulas */}
+                  <div className="mt-3">
+                    <div className="font-semibold text-sm mb-1">Aulas</div>
+                    {loadingAulas[turma.id] ? (
+                      <p className="text-xs text-gray-400">Carregando aulas...</p>
+                    ) : (aulasPorTurma[turma.id]?.length ? (
+                      <ul className="text-sm text-gray-700 space-y-1">
+                        {aulasPorTurma[turma.id].map(aula => (
+                          <li key={aula.id} className="flex items-center gap-2">
+                            <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
+                            {new Date(aula.data_hora).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-gray-400">Nenhuma aula cadastrada.</p>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>

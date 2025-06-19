@@ -217,6 +217,33 @@ export const getTurmas = async (): Promise<Turma[]> => {
   return data || [];
 };
 
+export const createTurma = async (turma: Omit<Turma, 'id' | 'criado_em'>): Promise<Turma | null> => {
+  const { data, error } = await supabase
+    .from('turmas')
+    .insert({
+      ...turma,
+      criado_em: new Date().toISOString()
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error('Erro ao criar turma:', error);
+    return null;
+  }
+  return data;
+};
+
+export const addAlunoToTurma = async (alunoId: number, turmaId: number): Promise<boolean> => {
+  const { error } = await supabase
+    .from('alunos_turmas')
+    .insert({ aluno_id: alunoId, turma_id: turmaId });
+  if (error) {
+    console.error('Erro ao adicionar aluno à turma:', error);
+    return false;
+  }
+  return true;
+};
+
 // Aulas
 export const createAula = async (turmaId: number): Promise<Aula | null> => {
   const qrToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
@@ -369,17 +396,18 @@ export const convertStudentToSupabase = async (student: Student): Promise<AlunoC
   return await saveAlunoCompleto(usuario, detalhes);
 };
 
-export const convertSupabaseToStudent = (alunoCompleto: AlunoCompleto): Student => {
+export const convertSupabaseToStudent = (alunoCompleto: any): Student => {
+  const detalhes = alunoCompleto.detalhes || alunoCompleto.alunos_detalhes;
   return {
     id: alunoCompleto.id.toString(),
     ra: alunoCompleto.ra,
     name: alunoCompleto.nome,
-    belt: alunoCompleto.detalhes ? convertFaixaToBelt(alunoCompleto.detalhes.faixa) as BeltType : 'white',
-    beltStartDate: alunoCompleto.detalhes?.tempo_pratica ? 
-      new Date(Date.now() - (alunoCompleto.detalhes.tempo_pratica * 24 * 60 * 60 * 1000)) : 
-      new Date(),
+    belt: detalhes ? convertFaixaToBelt(detalhes.faixa) as BeltType : 'white',
+    beltStartDate: detalhes?.tempo_pratica
+      ? new Date(Date.now() - (detalhes.tempo_pratica * 24 * 60 * 60 * 1000))
+      : new Date(),
     attendanceCount: alunoCompleto.total_presencas || 0,
-    weight: alunoCompleto.detalhes?.peso,
-    height: alunoCompleto.detalhes?.altura
+    weight: detalhes?.peso,
+    height: detalhes?.altura
   };
 };

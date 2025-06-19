@@ -90,7 +90,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Se falhar ao criar na tabela, ainda mostrar sucesso mas log do erro
           toast({
             title: 'Conta criada parcialmente',
-            description: 'Conta criada no sistema de autenticação. Entre em contato com o administrador se tiver problemas.',
+            description: 'Conta criada no sistema de autenticação. Entre em contato com o administrador se tiver problemas. Verifique sua caixa de entrada ( Email )',
             variant: 'default',
           });
           return;

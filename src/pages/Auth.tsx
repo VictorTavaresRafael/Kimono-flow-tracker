@@ -14,6 +14,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Eye, EyeOff, User, Lock, Mail, UserCheck, GraduationCap } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import EmailConfirmation from '@/components/EmailConfirmation';
+import StudentProfile from '@/components/StudentProfile';
+import { getStudentByRA, recordAttendance } from '@/utils/helpers';
+import { toast } from '@/components/ui/use-toast';
+import { supabase } from '@/lib/supabase';
+import { Turma, Aula } from '@/types/student';
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -29,6 +34,15 @@ const Auth = () => {
   });
   const { signIn, signUp, loading, currentUser } = useAuth();
   const navigate = useNavigate();
+  const [isStudentFlow, setIsStudentFlow] = useState(false);
+  const [studentRA, setStudentRA] = useState('');
+  const [studentData, setStudentData] = useState(null);
+  const [studentLoading, setStudentLoading] = useState(false);
+  const [attendanceSuccess, setAttendanceSuccess] = useState(false);
+  const [turmasAluno, setTurmasAluno] = useState<Turma[]>([]);
+  const [turmaIdAluno, setTurmaIdAluno] = useState<string>("");
+  const [aulaMaisRecente, setAulaMaisRecente] = useState<Aula | null>(null);
+  const [jaTemPresenca, setJaTemPresenca] = useState(false);
 
   // Redirecionar se usuário já está logado
   useEffect(() => {
@@ -98,26 +112,163 @@ const Auth = () => {
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword);
-  };  return (
+  };
+
+  // Buscar turmas do aluno ao acessar studentData
+  useEffect(() => {
+    async function fetchTurmasAluno() {
+      if (!studentData?.id) return;
+      const { data: rels } = await supabase
+        .from('alunos_turmas')
+        .select('turma_id')
+        .eq('aluno_id', Number(studentData.id));
+      if (!rels?.length) {
+        setTurmasAluno([]);
+        return;
+      }
+      const turmaIds = rels.map(r => r.turma_id);
+      const { data: turmas } = await supabase
+        .from('turmas')
+        .select('*')
+        .in('id', turmaIds);
+      setTurmasAluno(turmas || []);
+    }
+    if (studentData?.id) fetchTurmasAluno();
+  }, [studentData]);
+
+  // Buscar aula mais recente ao selecionar turma
+  useEffect(() => {
+    async function fetchAulaMaisRecente() {
+      if (!turmaIdAluno) { setAulaMaisRecente(null); setJaTemPresenca(false); return; }
+      const { data: aulas } = await supabase
+        .from('aulas')
+        .select('*')
+        .eq('turma_id', turmaIdAluno)
+        .order('data_hora', { ascending: false })
+        .limit(1);
+      const aula = aulas?.[0] || null;
+      setAulaMaisRecente(aula);
+      if (aula && studentData?.id) {
+        // Verificar se já tem presença
+        const { data: presencas } = await supabase
+          .from('presencas')
+          .select('id')
+          .eq('aula_id', aula.id)
+          .eq('aluno_id', Number(studentData.id));
+        setJaTemPresenca(!!presencas?.length);
+      } else {
+        setJaTemPresenca(false);
+      }
+    }
+    fetchAulaMaisRecente();
+  }, [turmaIdAluno, studentData]);
+
+  return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-100 flex items-center justify-center p-4">
-      
-      {/* Mostrar tela de confirmação de email se necessário */}
-      {showEmailConfirmation && pendingEmail ? (
-        <div className="space-y-4">
-          <EmailConfirmation email={pendingEmail} />
-          <div className="text-center">
-            <Button 
-              variant="ghost" 
-              onClick={() => {
-                setShowEmailConfirmation(false);
-                setPendingEmail('');
+      {/* Tela do fluxo de aluno */}
+      {isStudentFlow ? (
+        <Card className="w-full max-w-xl p-8 shadow-xl border-t-4 border-t-blue-500">
+          {!studentData ? (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setStudentLoading(true);
+                setStudentData(null);
+                try {
+                  const student = await getStudentByRA(studentRA.trim());
+                  if (!student) {
+                    toast({
+                      title: 'Aluno não encontrado',
+                      description: 'Verifique o RA e tente novamente',
+                      variant: 'destructive',
+                    });
+                  } else {
+                    setStudentData(student);
+                  }
+                } catch (err) {
+                  toast({
+                    title: 'Erro',
+                    description: 'Erro ao buscar aluno',
+                    variant: 'destructive',
+                  });
+                } finally {
+                  setStudentLoading(false);
+                }
               }}
-              className="text-sm text-gray-500 hover:text-gray-700"
+              className="space-y-6"
             >
-              ← Voltar para login
-            </Button>
-          </div>
-        </div>
+              <div className="text-center mb-8">
+                <div className="w-20 h-20 bg-blue-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                  <UserCheck className="h-10 w-10 text-blue-600" />
+                </div>
+                <h1 className="text-2xl font-bold text-gray-900">Sou Aluno</h1>
+                <p className="text-gray-500 mt-2">Digite seu RA para acessar suas informações</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="student-ra">RA do Aluno</Label>
+                <Input
+                  id="student-ra"
+                  placeholder="Digite seu RA"
+                  value={studentRA}
+                  onChange={e => setStudentRA(e.target.value)}
+                  disabled={studentLoading}
+                  autoFocus
+                />
+              </div>
+              <Button type="submit" className="w-full h-12 text-lg" disabled={studentLoading || !studentRA.trim()}>
+                {studentLoading ? 'Buscando...' : 'Acessar'}
+              </Button>
+              <Button type="button" variant="ghost" className="w-full" onClick={() => { setIsStudentFlow(false); setStudentRA(''); setStudentData(null); }}>
+                Voltar
+              </Button>
+            </form>
+          ) : (
+            <div>
+              <StudentProfile student={studentData} onBack={() => { setStudentData(null); setStudentRA(''); }} />
+              {aulaMaisRecente && turmaIdAluno && !jaTemPresenca && (
+                <Button
+                  className="w-full max-w-xs"
+                  onClick={async () => {
+                    try {
+                      await supabase.from('presencas').insert({
+                        aula_id: aulaMaisRecente.id,
+                        aluno_id: Number(studentData.id),
+                        registrada_por: Number(studentData.id), // O próprio aluno
+                        horario: new Date().toISOString()
+                      });
+                      setAttendanceSuccess(true);
+                      toast({ title: 'Presença registrada!', description: `${studentData.name} está presente.`, variant: 'default' });
+                      setTimeout(() => setAttendanceSuccess(false), 3000);
+                      setJaTemPresenca(true);
+                    } catch (err) {
+                      toast({ title: 'Erro', description: 'Erro ao registrar presença', variant: 'destructive' });
+                    }
+                  }}
+                >Registrar Presença</Button>
+              )}
+              {aulaMaisRecente && turmaIdAluno && jaTemPresenca && (
+                <div className="text-green-700 font-semibold mb-2">Você já registrou presença nesta aula.</div>
+              )}
+              {turmasAluno.length > 0 && (
+                <div className="w-full max-w-xs mt-4">
+                  <label className="block mb-1 font-medium">Selecione a turma</label>
+                  <select
+                    className="border rounded px-2 py-1 w-full"
+                    value={turmaIdAluno}
+                    onChange={e => setTurmaIdAluno(e.target.value)}
+                  >
+                    <option value="">Selecione</option>
+                    {turmasAluno.map(turma => (
+                      <option key={turma.id} value={turma.id}>{turma.nome}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <Button type="button" variant="ghost" className="w-full mt-2" onClick={() => { setIsStudentFlow(false); setStudentRA(''); setStudentData(null); }}>
+                Sair</Button>
+            </div>
+          )}
+        </Card>
       ) : (
         <Card className="w-full max-w-md p-8 shadow-xl border-t-4 border-t-blue-500">
           <div className="text-center mb-8">
@@ -190,7 +341,7 @@ const Auth = () => {
                     id="ra"
                     name="ra"
                     type="text"
-                    placeholder="Ex: PROF001, MON001"
+                    placeholder="Ex: 2000000"
                     value={formData.ra}
                     onChange={handleInputChange}
                     disabled={loading}
@@ -199,9 +350,6 @@ const Auth = () => {
                   />
                   <UserCheck className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
                 </div>
-                <p className="text-xs text-gray-500">
-                  Use PROF para professores ou MON para monitores
-                </p>
               </div>
 
               <div className="space-y-2">
@@ -286,6 +434,13 @@ const Auth = () => {
         </div>        <div className="mt-8 text-center text-xs text-gray-400">
           <p>© {new Date().getFullYear()} Sistema de Controle JJ</p>
           <p className="mt-1">Acesso restrito a professores e monitores</p>
+        </div>
+
+        {/* Botão para fluxo de aluno */}
+        <div className="mt-8 text-center">
+          <Button variant="outline" className="w-full" onClick={() => setIsStudentFlow(true)}>
+            Sou aluno
+          </Button>
         </div>
       </Card>
       )}

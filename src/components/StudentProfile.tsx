@@ -1,9 +1,13 @@
-
 import { Student } from "@/types/student";
 import { calculateBeltTime, getBeltColor } from "@/utils/helpers";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowLeft, Award, Calendar, Info, User } from "lucide-react";
+import { useEffect, useState } from "react";
+import { getTurmas, addAlunoToTurma } from "@/lib/supabase-service";
+import { Turma } from "@/types/student";
+import { toast } from "@/components/ui/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface StudentProfileProps {
   student: Student;
@@ -12,6 +16,39 @@ interface StudentProfileProps {
 
 const StudentProfile = ({ student, onBack }: StudentProfileProps) => {
   const formattedStartDate = new Date(student.beltStartDate).toLocaleDateString('pt-BR');
+
+  // Estado para turmas e seleção
+  const [turmas, setTurmas] = useState<Turma[]>([]);
+  const [turmaSelecionada, setTurmaSelecionada] = useState<string>("");
+  const [loadingTurmas, setLoadingTurmas] = useState(true);
+  const [adicionando, setAdicionando] = useState(false);
+
+  const { currentUser } = useAuth();
+
+  useEffect(() => {
+    setLoadingTurmas(true);
+    getTurmas().then(turmas => {
+      setTurmas(turmas);
+      setLoadingTurmas(false);
+    });
+  }, []);
+
+  const handleAdicionarTurma = async () => {
+    if (!turmaSelecionada || !student.id) return;
+    setAdicionando(true);
+    try {
+      const ok = await addAlunoToTurma(Number(student.id), Number(turmaSelecionada));
+      if (ok) {
+        toast({ title: "Aluno adicionado à turma com sucesso!" });
+      } else {
+        toast({ title: "Erro ao adicionar aluno à turma", variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "Erro ao adicionar aluno à turma", description: String(e), variant: "destructive" });
+    } finally {
+      setAdicionando(false);
+    }
+  };
 
   return (
     <div className="w-full max-w-3xl mx-auto px-4 py-6">
@@ -80,6 +117,7 @@ const StudentProfile = ({ student, onBack }: StudentProfileProps) => {
                 </div>
               </div>
               
+              {/*
               {student.additionalInfo && (
                 <div className="flex flex-col md:col-span-2">
                   <div className="flex items-center mb-4">
@@ -91,9 +129,38 @@ const StudentProfile = ({ student, onBack }: StudentProfileProps) => {
                   </p>
                 </div>
               )}
+              */}
             </div>
           </div>
         </div>
+        {/* Adicionar em uma turma - apenas para professor */}
+        {currentUser?.user_metadata?.role === 'professor' && (
+          <div className="mt-8">
+            <h2 className="font-semibold mb-2">Adicionar em uma turma</h2>
+            {loadingTurmas ? (
+              <p className="text-sm text-gray-500">Carregando turmas...</p>
+            ) : (
+              <div className="flex gap-2 items-center">
+                <select
+                  className="border rounded px-2 py-1"
+                  value={turmaSelecionada}
+                  onChange={e => setTurmaSelecionada(e.target.value)}
+                >
+                  <option value="">Selecione a turma</option>
+                  {turmas.map(turma => (
+                    <option key={turma.id} value={turma.id}>{turma.nome}</option>
+                  ))}
+                </select>
+                <Button
+                  onClick={handleAdicionarTurma}
+                  disabled={!turmaSelecionada || adicionando}
+                >
+                  {adicionando ? "Adicionando..." : "Adicionar à turma"}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
     </div>
   );

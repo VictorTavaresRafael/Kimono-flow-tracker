@@ -3,18 +3,32 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArrowLeft, Check, QrCode, UserCheck, LogOut, User } from "lucide-react";
 import { Link } from "react-router-dom";
-import { recordAttendance, getStudentByRA } from "@/utils/helpers";
+import { getStudentByRA } from "@/utils/helpers";
+import { getAlunosCompletos } from "@/lib/supabase-service";
 import { toast } from "@/components/ui/use-toast";
 import { Card } from "@/components/ui/card";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
+import { getTurmas } from "@/lib/supabase-service";
+import { supabase } from "@/lib/supabase";
+import { Turma, Aula, Student } from "@/types/student";
 
 const Attendance = () => {
   const [ra, setRa] = useState("");
-  const [success, setSuccess] = useState(false);  const [studentName, setStudentName] = useState("");
+  const [success, setSuccess] = useState(false);
+  const [studentName, setStudentName] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const { currentUser, signOut } = useAuth();
+  const [turmas, setTurmas] = useState<Turma[]>([]);
+  const [turmaId, setTurmaId] = useState<string>("");
+  const [aulas, setAulas] = useState<Aula[]>([]);
+  const [aulaId, setAulaId] = useState<string>("");
+  const [loadingTurmas, setLoadingTurmas] = useState(true);
+  const [loadingAulas, setLoadingAulas] = useState(false);
+  const [alunosTurma, setAlunosTurma] = useState<Student[]>([]);
+  const [alunoId, setAlunoId] = useState<string>("");
+  const [professorId, setProfessorId] = useState<number | null>(null);
 
   const handleLogout = async () => {
     await signOut();
@@ -27,68 +41,133 @@ const Attendance = () => {
       inputElement.focus();
     }
   }, [success]);
-    const handleSubmit = async (e: React.FormEvent) => {
+
+  // Buscar turmas do professor logado
+  useEffect(() => {
+    async function fetchTurmas() {
+      setLoadingTurmas(true);
+      const allTurmas = await getTurmas();
+      const ra = currentUser?.user_metadata?.ra;
+      const usuario = await supabase.from('usuarios').select('id').eq('ra', ra).single();
+      const professorId = usuario.data?.id;
+      setTurmas(allTurmas.filter(t => t.professor_id === professorId));
+      setLoadingTurmas(false);
+    }
+    if (currentUser?.user_metadata?.role === 'professor') {
+      fetchTurmas();
+    }
+  }, [currentUser]);
+
+  // Buscar aulas da turma selecionada
+  useEffect(() => {
+    async function fetchAulas() {
+      if (!turmaId) return;
+      setLoadingAulas(true);
+      const { data, error } = await supabase
+        .from('aulas')
+        .select('*')
+        .eq('turma_id', turmaId)
+        .order('data_hora', { ascending: false });
+      setAulas(data || []);
+      setLoadingAulas(false);
+      setAulaId("");
+    }
+    fetchAulas();
+  }, [turmaId]);
+
+  // Buscar alunos da turma selecionada
+  useEffect(() => {
+    async function fetchAlunosTurma() {
+      if (!turmaId) { setAlunosTurma([]); setAlunoId(""); return; }
+      // Buscar alunos da turma
+      const { data: rels } = await supabase
+        .from('alunos_turmas')
+        .select('aluno_id')
+        .eq('turma_id', turmaId);
+      if (!rels?.length) { setAlunosTurma([]); setAlunoId(""); return; }
+      const alunoIds = rels.map(r => r.aluno_id);
+      const alunosCompletos = await getAlunosCompletos();
+      const alunos = alunosCompletos.filter(a => alunoIds.includes(a.id));
+      setAlunosTurma(alunos.map(a => ({
+        id: a.id.toString(),
+        ra: a.ra,
+        name: a.nome,
+        belt: faixaToBelt(a.detalhes?.faixa),
+        beltStartDate: new Date(),
+        attendanceCount: a.total_presencas || 0,
+        weight: a.detalhes?.peso,
+        height: a.detalhes?.altura
+      })));
+      setAlunoId("");
+    }
+    fetchAlunosTurma();
+  }, [turmaId]);
+
+  // Buscar o id do professor logado
+  useEffect(() => {
+    async function fetchProfessorId() {
+      if (currentUser?.user_metadata?.ra) {
+        const usuario = await supabase.from('usuarios').select('id').eq('ra', currentUser.user_metadata.ra).single();
+        setProfessorId(usuario.data?.id || null);
+      }
+    }
+    fetchProfessorId();
+  }, [currentUser]);
+
+  // Função utilitária para converter faixa para BeltType
+  const faixaToBelt = (faixa: string): 'white' | 'blue' | 'purple' | 'brown' | 'black' => {
+    switch (faixa?.toLowerCase()) {
+      case 'branca': return 'white';
+      case 'azul': return 'blue';
+      case 'roxa': return 'purple';
+      case 'marrom': return 'brown';
+      case 'preta': return 'black';
+      default: return 'white';
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!ra.trim()) {
-      toast({
-        title: "Erro",
-        description: "Digite o RA do aluno para registrar presença",
-        variant: "destructive"
-      });
+    if (!alunoId) {
+      toast({ title: "Erro", description: "Selecione um aluno para registrar presença", variant: "destructive" });
       return;
     }
-    
+    if (!professorId) {
+      toast({ title: "Erro", description: "Professor não identificado", variant: "destructive" });
+      return;
+    }
     setIsProcessing(true);
-    
     try {
-      // Verificar se o aluno existe e registrar presença
-      const student = await getStudentByRA(ra.trim());
-      
-      if (!student) {
-        toast({
-          title: "Aluno não encontrado",
-          description: "Verifique o RA e tente novamente",
-          variant: "destructive"
-        });
+      // Verificar se já existe presença para este aluno nesta aula
+      const { data: presencasExistentes } = await supabase
+        .from('presencas')
+        .select('id')
+        .eq('aula_id', aulaId)
+        .eq('aluno_id', alunoId);
+      if (presencasExistentes && presencasExistentes.length > 0) {
+        toast({ title: "Presença já registrada", description: "Este aluno já está presente nesta aula.", variant: "default" });
         setIsProcessing(false);
         return;
       }
-      
       // Registrar presença
-      const result = await recordAttendance(student.ra);
-      
-      if (result) {
-        setSuccess(true);
-        setStudentName(student.name);
-        setRa("");
-        
-        // Resetar após 3 segundos
-        setTimeout(() => {
-          setSuccess(false);
-          setStudentName("");
-          setIsProcessing(false);
-        }, 3000);
-        
-        toast({
-          title: "Presença registrada!",
-          description: `${student.name} está presente na aula de hoje.`,
-          variant: "default"
-        });
-      } else {
-        toast({
-          title: "Erro",
-          description: "Não foi possível registrar a presença",
-          variant: "destructive"
-        });
-        setIsProcessing(false);
-      }    } catch (error) {
-      console.error('Erro ao registrar presença:', error);
-      toast({
-        title: "Erro",
-        description: "Ocorreu um erro ao registrar a presença",
-        variant: "destructive"
+      const { error } = await supabase.from('presencas').insert({
+        aula_id: Number(aulaId),
+        aluno_id: Number(alunoId),
+        registrada_por: professorId,
+        horario: new Date().toISOString()
       });
+      if (error) throw error;
+      setSuccess(true);
+      setStudentName(alunosTurma.find(a => a.id === alunoId)?.name || "");
+      setAlunoId("");
+      setTimeout(() => {
+        setSuccess(false);
+        setStudentName("");
+        setIsProcessing(false);
+      }, 3000);
+      toast({ title: "Presença registrada!", description: `${alunosTurma.find(a => a.id === alunoId)?.name} está presente na aula de hoje.`, variant: "default" });
+    } catch (error) {
+      toast({ title: "Erro ao registrar presença", description: String(error), variant: "destructive" });
       setIsProcessing(false);
     }
   };
@@ -129,7 +208,7 @@ const Attendance = () => {
             </div>
             <h1 className="text-2xl font-bold">Registro de Presença</h1>
             <p className="text-gray-500 mt-2">
-              Digite seu RA para confirmar sua presença na aula de hoje
+              Selecione o aluno para confirmar presença na aula de hoje
             </p>
           </div>
           
@@ -151,26 +230,66 @@ const Attendance = () => {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="ra" className="text-center block">Registro do Aluno (RA)</Label>
-                <Input
-                  id="ra"
-                  placeholder="Digite seu RA"
-                  value={ra}
-                  onChange={(e) => setRa(e.target.value)}
-                  className="text-center text-lg font-medium"
-                  autoFocus
-                  autoComplete="off"
-                  disabled={isProcessing}
-                />
-                <p className="text-sm text-gray-500 text-center mt-1">
-                  Exemplo: 2023001
-                </p>
+                <Label>Turma</Label>
+                {loadingTurmas ? (
+                  <p>Carregando turmas...</p>
+                ) : (
+                  <select
+                    className="border rounded px-2 py-1 w-full"
+                    value={turmaId}
+                    onChange={e => setTurmaId(e.target.value)}
+                    required
+                  >
+                    <option value="">Selecione a turma</option>
+                    {turmas.map(turma => (
+                      <option key={turma.id} value={turma.id}>{turma.nome}</option>
+                    ))}
+                  </select>
+                )}
               </div>
-              
-              <Button 
-                type="submit" 
+              {turmaId && (
+                <div className="space-y-2">
+                  <Label>Aula</Label>
+                  {loadingAulas ? (
+                    <p>Carregando aulas...</p>
+                  ) : (
+                    <select
+                      className="border rounded px-2 py-1 w-full"
+                      value={aulaId}
+                      onChange={e => setAulaId(e.target.value)}
+                      required
+                    >
+                      <option value="">Selecione a aula</option>
+                      {aulas.map(aula => (
+                        <option key={aula.id} value={aula.id}>
+                          {new Date(aula.data_hora).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+              {aulaId && (
+                <div className="space-y-2">
+                  <Label htmlFor="aluno">Aluno</Label>
+                  <select
+                    id="aluno"
+                    className="border rounded px-2 py-1 w-full"
+                    value={alunoId}
+                    onChange={e => setAlunoId(e.target.value)}
+                    required
+                  >
+                    <option value="">Selecione o aluno</option>
+                    {alunosTurma.map(aluno => (
+                      <option key={aluno.id} value={aluno.id}>{aluno.name} (RA: {aluno.ra})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <Button
+                type="submit"
                 className="w-full h-12 text-lg transition-all"
-                disabled={isProcessing}
+                disabled={isProcessing || !turmaId || !aulaId || !alunoId}
               >
                 {isProcessing ? (
                   <div className="flex items-center gap-2">
