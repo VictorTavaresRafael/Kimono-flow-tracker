@@ -1,9 +1,26 @@
 
-import { BeltType, Student } from "@/types/student";
+import { BeltType, Student, AlunoCompleto } from "@/types/student";
+import { 
+  getAlunosCompletos,
+  getAlunoCompletoByRA,
+  saveAlunoCompleto,
+  recordAttendanceByRAAndQR,
+  convertStudentToSupabase,
+  convertSupabaseToStudent,
+  getTotalPresencasByAluno
+} from "@/lib/supabase-service";
 
-export function calculateBeltTime(beltStartDate: Date): string {
+export function calculateBeltTime(beltStartDate: Date | string): string {
+  // Convert to Date object if it's a string
+  const startDate = typeof beltStartDate === 'string' ? new Date(beltStartDate) : beltStartDate;
+  
+  // Check if the date is valid
+  if (!startDate || isNaN(startDate.getTime())) {
+    return "Data inválida";
+  }
+  
   const now = new Date();
-  const diffTime = Math.abs(now.getTime() - beltStartDate.getTime());
+  const diffTime = Math.abs(now.getTime() - startDate.getTime());
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   
   if (diffDays < 30) {
@@ -35,136 +52,154 @@ export function getBeltColor(belt: BeltType): string {
   return colors[belt];
 }
 
-// Mock data para desenvolvimento inicial
-export const mockStudents: Student[] = [
-  {
-    id: '1',
-    ra: '2023001',
-    name: 'João Silva',
-    belt: 'blue',
-    beltStartDate: new Date(2022, 5, 15),
-    weight: 75,
-    height: 178,
-    additionalInfo: 'Prefere treinar no horário da tarde. Foco em competições.',
-    attendanceCount: 87
-  },
-  {
-    id: '2',
-    ra: '2023002',
-    name: 'Maria Oliveira',
-    belt: 'purple',
-    beltStartDate: new Date(2021, 2, 10),
-    weight: 62,
-    height: 165,
-    additionalInfo: 'Tem dificuldade com posição de guarda. Lesão antiga no joelho direito.',
-    attendanceCount: 135
-  },
-  {
-    id: '3',
-    ra: '2023003',
-    name: 'Pedro Santos',
-    belt: 'white',
-    beltStartDate: new Date(2023, 1, 20),
-    weight: 82,
-    height: 183,
-    additionalInfo: 'Iniciante com experiência em judô.',
-    attendanceCount: 23
-  },
-  {
-    id: '4',
-    ra: '2023004',
-    name: 'Ana Costa',
-    belt: 'brown',
-    beltStartDate: new Date(2019, 8, 5),
-    weight: 59,
-    height: 162,
-    additionalInfo: 'Professora assistente nas aulas infantis.',
-    attendanceCount: 284
-  },
-  {
-    id: '5',
-    ra: '2023005',
-    name: 'Lucas Mendes',
-    belt: 'black',
-    beltStartDate: new Date(2017, 4, 12),
-    weight: 78,
-    height: 175,
-    additionalInfo: 'Professor principal. Especialista em finalizações.',
-    attendanceCount: 512
-  },
-  {
-    id: '6',
-    ra: '2023006',
-    name: 'Fernanda Lima',
-    belt: 'blue',
-    beltStartDate: new Date(2022, 10, 25),
-    weight: 57,
-    height: 160,
-    additionalInfo: 'Atleta de competição. Técnica forte de raspagem.',
-    attendanceCount: 68
-  },
-];
-
-// Mock de armazenamento local
-export const getStudents = (): Student[] => {
-  const studentsJson = localStorage.getItem('jj-students');
-  if (!studentsJson) {
-    // Inicializa com dados mock na primeira vez
-    localStorage.setItem('jj-students', JSON.stringify(mockStudents));
-    return mockStudents;
+// Funções principais que usam Supabase
+export const getStudents = async (): Promise<Student[]> => {
+  try {
+    const alunosCompletos = await getAlunosCompletos();
+    
+    // Buscar total de presenças para cada aluno
+    const studentsWithAttendance = await Promise.all(
+      alunosCompletos.map(async (aluno) => {
+        const totalPresencas = await getTotalPresencasByAluno(aluno.id);
+        return {
+          ...convertSupabaseToStudent(aluno),
+          attendanceCount: totalPresencas
+        };
+      })
+    );
+    
+    return studentsWithAttendance;
+  } catch (error) {
+    console.warn('Erro ao buscar alunos do Supabase, usando localStorage:', error);
+    return getStudentsFromLocalStorage();
   }
-  return JSON.parse(studentsJson);
 };
 
-export const saveStudent = (student: Student) => {
-  const students = getStudents();
-  const existingIndex = students.findIndex(s => s.ra === student.ra);
-  
-  if (existingIndex >= 0) {
-    students[existingIndex] = student;
-  } else {
-    // Gerar ID único para novo aluno
-    student.id = new Date().getTime().toString();
-    students.push(student);
+export const saveStudent = async (student: Student): Promise<Student> => {
+  try {
+    const alunoCompleto = await convertStudentToSupabase(student);
+    if (alunoCompleto) {
+      return convertSupabaseToStudent(alunoCompleto);
+    }
+    throw new Error('Falha ao salvar no Supabase');
+  } catch (error) {
+    console.warn('Erro ao salvar no Supabase, usando localStorage:', error);
+    return saveStudentToLocalStorage(student);
   }
-  
-  localStorage.setItem('jj-students', JSON.stringify(students));
-  return student;
 };
 
-export const getStudentByRA = (ra: string): Student | undefined => {
-  const students = getStudents();
+export const getStudentByRA = async (ra: string): Promise<Student | undefined> => {
+  try {
+    const alunoCompleto = await getAlunoCompletoByRA(ra);
+    if (alunoCompleto) {
+      const totalPresencas = await getTotalPresencasByAluno(alunoCompleto.id);
+      return {
+        ...convertSupabaseToStudent(alunoCompleto),
+        attendanceCount: totalPresencas
+      };
+    }
+    return undefined;
+  } catch (error) {
+    console.warn('Erro ao buscar aluno do Supabase, usando localStorage:', error);
+    return getStudentByRAFromLocalStorage(ra);
+  }
+};
+
+export const recordAttendance = async (ra: string, qrToken?: string): Promise<boolean> => {
+  try {
+    if (qrToken) {
+      // Usar ID do usuário atual como registrador (temporário - implementar autenticação depois)
+      const success = await recordAttendanceByRAAndQR(ra, qrToken, 1);
+      if (success) {
+        return true;
+      }
+    }
+    throw new Error('Falha ao registrar no Supabase');
+  } catch (error) {
+    console.warn('Erro ao registrar presença no Supabase, usando localStorage:', error);
+    return recordAttendanceToLocalStorage(ra);
+  }
+};
+
+// Funções de fallback para localStorage
+const getStudentsFromLocalStorage = (): Student[] => {
+  try {
+    const studentsJson = localStorage.getItem('jj-students');
+    if (!studentsJson) {
+      return [];
+    }
+    return JSON.parse(studentsJson);
+  } catch (error) {
+    console.warn('Storage access denied, returning empty array:', error);
+    return [];
+  }
+};
+
+const saveStudentToLocalStorage = (student: Student): Student => {
+  try {
+    const students = getStudentsFromLocalStorage();
+    const existingIndex = students.findIndex(s => s.ra === student.ra);
+    
+    if (existingIndex >= 0) {
+      students[existingIndex] = student;
+    } else {
+      // Gerar ID único para novo aluno
+      const newStudent = { ...student, id: new Date().getTime().toString() };
+      students.push(newStudent);
+      student = newStudent;
+    }
+    
+    localStorage.setItem('jj-students', JSON.stringify(students));
+    return student;
+  } catch (error) {
+    console.warn('Storage access denied, returning student without saving:', error);
+    return student;
+  }
+};
+
+const getStudentByRAFromLocalStorage = (ra: string): Student | undefined => {
+  const students = getStudentsFromLocalStorage();
   return students.find(s => s.ra === ra);
 };
 
-export const recordAttendance = (ra: string): boolean => {
-  const students = getStudents();
-  const studentIndex = students.findIndex(s => s.ra === ra);
-  
-  if (studentIndex >= 0) {
-    students[studentIndex].attendanceCount += 1;
-    localStorage.setItem('jj-students', JSON.stringify(students));
+const recordAttendanceToLocalStorage = (ra: string): boolean => {
+  try {
+    const students = getStudentsFromLocalStorage();
+    const studentIndex = students.findIndex(s => s.ra === ra);
     
-    // Salvar registro de presença
-    const attendances = getAttendances();
-    const newAttendance = {
-      id: new Date().getTime().toString(),
-      studentRA: ra,
-      date: new Date()
-    };
-    attendances.push(newAttendance);
-    localStorage.setItem('jj-attendances', JSON.stringify(attendances));
+    if (studentIndex >= 0) {
+      students[studentIndex].attendanceCount += 1;
+      localStorage.setItem('jj-students', JSON.stringify(students));
+      
+      // Salvar registro de presença
+      const attendances = getAttendances();
+      const newAttendance = {
+        id: new Date().getTime().toString(),
+        studentRA: ra,
+        date: new Date()
+      };
+      attendances.push(newAttendance);
+      localStorage.setItem('jj-attendances', JSON.stringify(attendances));
+      
+      return true;
+    }
     
-    return true;
+    return false;
+  } catch (error) {
+    console.warn('Storage access denied, cannot record attendance:', error);
+    return false;
   }
-  
-  return false;
 };
 
 export const getAttendances = () => {
-  const attendancesJson = localStorage.getItem('jj-attendances');
-  if (!attendancesJson) {
+  try {
+    const attendancesJson = localStorage.getItem('jj-attendances');
+    if (!attendancesJson) {
+      return [];
+    }
+    return JSON.parse(attendancesJson);
+  } catch (error) {
+    console.warn('Storage access denied, returning empty attendances:', error);
     return [];
   }
-  return JSON.parse(attendancesJson);
 };
