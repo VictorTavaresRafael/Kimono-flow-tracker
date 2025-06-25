@@ -43,7 +43,7 @@ Um sistema completo para gerenciar alunos, presenças e atividades em academias 
 
 ### 1. Clone o repositório
 ```sh
-git clone <YOUR_GIT_URL>
+git clone https://github.com/VictorTavaresRafael/Kimono-flow-tracker.git
 cd kimono-flow-tracker
 ```
 
